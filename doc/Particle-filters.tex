@@ -1,0 +1,299 @@
+\documentclass[10pt,fleqn]{article}
+\usepackage{/home/clair/Documents/mystyle}
+
+%----------------------------------------------------------------------
+% reformat section headers to be smaller \& left-aligned
+\titleformat{\section}
+	{\large\bfseries}
+	{\thesection}{1em}{}
+	
+\titleformat{\subsection}
+	{\normalfont\bfseries}
+	{\thesubsection}{1em}{}
+	
+%----------------------------------------------------------------------
+
+\graphicspath{{../fig/}}
+    
+%======================================================================
+
+\begin{document}
+
+\section*{Particle filtering in state space models}
+
+\section{Motivation \& model definition}
+
+Hidden Markov Models may be considered a natural framework for modelling weather forecasts. Meteorologists produce a numerical weather prediction using physical and stochastic models, which aims to predict the true state of the weather at some point in the future. The forecast may consist of numerous aspects of the weather (surface temperature, wind speed, precipitation and so on) and may also be made at multiple locations, all of which factors rapidly increase the dimension of both the forecast and the observation.
+%
+%In this example we will consider only surface temperature, which is commonly modelled as a multivariate normal distribution, with each additional variate representing the temperature at a different geographical location. 
+While the Kalman Filter and extensions have been used with some success to reduce bias in numerical weather forecasts - with the Hellenic National Meteorological Service using a nonlinear Kalman Filter to postprocess forecasts produced by the European Centre for Mid-term Weather Forecasting - particle filters have rarely been used, probably because of the high dimensionality of realistic data.
+
+In day-to-day usage, numerical weather predictions produced at fixed locations are used to forecast the weather in the surrounding area, using either downscaling or interpolation techniques; in this case the state and observation equations would be of different dimensions. However, the accuracy of a weather forecast can only be assessed against a verifying observation, so in many data sets, the state and observation equations will be of the same dimension (corresponding to the same locations); it is this latter case that we will investigate below.
+
+Based on the above considerations, the HMM to be investigated is a multivariate normal linear trend model. While a linear trend in temperature is unlikely to be realistic, it is a reasonable simplification over relatively short periods, or in regions where the seasonable variability is not great; for example, temperatures may be expected to decrease relatively steadily throughout Autumn into Winter, or to increase throughout Spring into Summer. Likewise, it is not uncommon for forecasts at a particular station to show a consistent bias; for example, stations at high altitude may consistently forecast higher temperatures than are observed, particularly if the topography is not accurately represented within the generating model. Both of these effects may be represented as a scalar or vector parameter ($\phi$ and $\rho$ respectively) with values close to 1. 
+%
+\begin{align*}
+x_t \sim MVN(\phi x_{t-1}, \sigma_v^2)  && \textit{State equation} \\
+y_t \sim MVN(\rho x_t, \sigma_w^2) && \textit{Observation equation} \\
+x_0 \sim MVN(\mu_0, \sigma_0^2) && \textit{Initial state}
+\end{align*}
+%
+For each model, parameters were derived from observed winter temperatures over a seven-year period at two locations in the UK, to ensure plausibility. In all cases, $\phi = 0.97$ and $\rho = 1$, representing the transition from autumn to winter, with no locations having any particular forecast bias. In all cases, the off-diagonal of the covariance matrix of the observation error $\sigma_w^2$ was assumed to be 0, indicating that forecast errors are uncorrelated between locations.
+
+% ------------------------------------------------------------------------------------------------------
+\section{Particle filtering with known parameters}
+
+Since the multivariate normal distribution is analytically tractable, a Kalman Filter is applied to give a baseline against which the particle filters can be compared. The particle filters applied are the Sequential Importance Sampler and Resampler, with both bootstrap and optimal proposal distributions; and also the Auxiliary Particle Filter, using the bootstrap proposal distribution. Where resampling was needed, the simple multinomial scheme was applied. These five filters were coded in R (the code for these can be found on  \href{https://github.com/ClairBee/particle-filters/PF.R}{GitHub}); the \texttt{fkf} package was used to generate the Kalman Filter mean and variance against which the performance of the particle filters is assessed. For reproducibility and consistency, each filter was initialised over the same data set, using the same seed value.
+
+% ------------------------------------------------------------------------------------------------------
+\subsection{Effect of varying dimension and number of particles}
+
+\subsubsection{Filter mean performance}
+
+As we would expect, all of the filters perform reasonably well when $d$ is small; in the univariate case, even a tiny number of particles ($N = 10$) is able to track the mean of the Kalman Filter quite closely, although a tenfold increase in the number of particles to 100 gives a visibly closer fit (\autoref{fig:filt-M} (a) and (b)), with the two resamplers and the auxiliary particle filter almost indistinguishable from one another. An increase in the number of dimensions of $x_t$ and $y_t$ will require inflation of the particle population by a larger factor, as  Figure \ref{fig:filt-M} (c) and (d) show. We have increased $d$ from 1 to 10, but increasing $N$ from 100 to 1000 does not result in the same degree of improvement as is shown in the univariate case; each additional dimension will be computationally more costly.
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% marginal filter mean
+\caption{Examples of marginal filter mean performance with varying dimension}
+\label{fig:filt-M}
+
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{Univariate $d = 1$, $N = 10$}
+		\includegraphics[scale = 0.5]{/filt-M/d1-N10}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{Univariate $d = 1$, $N = 100$}
+		\label{fig:filt-M:1-100}
+		\includegraphics[scale = 0.5]{/filt-M/d1-N100}
+	\end{subfigure}
+	
+	\vspace{10pt}
+	
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$d = 10$, $N = 100$}
+		\includegraphics[scale = 0.5]{/filt-M/d10-N100}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$d = 10$, $N = 1000$}
+		\includegraphics[scale = 0.5]{/filt-M/d10-N1000}
+	\end{subfigure}
+
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+While \autoref{fig:filt-M} gives a clear image of the behaviour of the filter mean in each of the marginal dimensions, it is not particularly useful for assessing the overall performance of each of the filters. \autoref{fig:RMSE-by-N} shows the RMSE of each particle filter, calculated across all dimensions of the model for selected sizes of particle populations. When the dimension is low, all of the filters perform well; however, with only a small increase in the dimension, the performance of the bootstrap importance sampler degenerates rapidly. A slower increase in RMSE is seen in the bootstrap SIR and the AF.
+
+Although we might hope for better performance from the more sophisticated APF, its performance here is actually consistently only slightly better than that of the much simpler bootstrap SIR. Moreover, in practise the auxiliary particle filter often failed when run in dimensions greater than 35, unable to generate auxiliary particles from the initial population (presumably, having initialised itself in an area of sufficiently low density to cause numerical instability in the covariance matrix); none of the other filters fell victim to this problem. The RMSE of the optimal filter, by comparison, remained fairly constant with increasing dimension, even - rather surprisingly - without the use of resampling. It seems that, in terms of approximating the filter mean at least, a good choice of proposal distribution will do much more to improve filter performance than choosing a more complex algorithm; although \autoref{fig:RMSE-by-N} does also suggest that the performance of the bootstrap and auxiliary filters may benefit more from the addition of extra particles than will the optimal filter, which may allow us to obtain better results overall.
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% RMSE vs KF
+\caption{Filter accuracy: RMSE against Kalman Filter for a fixed number of particles, with changing dimensions}
+\label{fig:RMSE-by-N}
+
+	\begin{subfigure}[t]{0.49\textwidth}
+		\caption{$N = 100$}
+		\includegraphics[scale = 0.5]{rmse/N100}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.32\textwidth}
+		\caption{$N = 1000$}
+		\includegraphics[scale = 0.5]{rmse/N1000}
+	\end{subfigure}
+
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+\subsubsection{Filter variance}
+
+Even if, as may often be the case, we are only really interested in the filtered mean state, we should always also check the filter variance, even if only to confirm whether the filter is are under-or over-smoothing the mean. Comparing plots \ref{fig:filt-M:1-100} and \ref{fig:filt-V:1-100}, which show the mean and variance of the same univariate filters, we see that high-variance errors (shown by the bootstrap SIS in green) are much more obvious in the mean plot than are the low-variance errors that appear in the optimal SIS, shown in sky blue. In fact, both filter means have very similar RMSE (0.52 and 0.49 respectively), but the types of errors are quite different. 
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% marginal filter variance
+\caption{Examples of marginal filter variance performance with varying dimension}
+\label{filt-V}
+
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{Univariate $d = 1$, $N = 100$}
+		\label{fig:filt-V:1-100}
+		\includegraphics[scale = 0.5]{/filt-V/d1-N100}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$d = 1$, $N = 1000$}
+		\includegraphics[scale = 0.5]{/filt-V/d1-N1000}
+	\end{subfigure}
+	\vspace{10pt}
+	
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$d = 10$, $N = 100$}
+		\includegraphics[scale = 0.5]{/filt-V/d10-N100}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+				\caption{$d = 50$, $N = 1000$}
+		\includegraphics[scale = 0.5]{/filt-V/d50-N1000}
+	\end{subfigure}
+
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Plots of the RMSE of the filter variance are not given here; because there is a lower limit of 0 on the filter variance, it is not a useful metric in this case. A filter with a low variance RMSE may either be performing very well, or may be stuck at 0 in a distribution where the true filter variance is, coincidentally, close to zero. This can be seen in \autoref{filt-V} (c) and (d); some of the variances of the bootstrap SIS and even the optimal SIR filter have exploded, while at other times they are stuck at zero (suggesting total degeneracy with only one non-zero weight, or very few non-zero weights). However, we can investigate whether a filter is regularly returning extremely high filter variances, by considering the magnitudes of the positive errors and the negative errors separately (\autoref{fig:filt-V-err}). Here, it seems that the auxiliary particle filter has an advantage; where the resampling filters show a tendency to have very high positive errors, the variance errors of the auxiliary particle filter tend to be both more symmetrically distributed about, and closer to, zero.
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% marginal filter variance
+\caption{Mean magnitude of positive errors in all filters}
+\label{fig:filt-V-err}
+	\centering
+	\includegraphics[scale = 0.7]{/filt-V/err}
+
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+\subsubsection{Weight degeneracy}
+The problem of weight degeneration in particle filtering has been much discussed and is apparent in all of the filter runs. In a univariate HMM with 100 particles, the weights rapidly degenerate to give an ESS of less than $0.1N$ when resampling is not employed (\autoref{fig:ESS}); when resampling is employed, the ESS in the univariate case was found to be around $0.85N$ , although as we have seen, this increase in effective sample size comes at the cost of a much higher filter variance. The rate of decrease is the same even with 1000 particles (not shown due to the similarity to (a)). In the higher-dimensional model in (b), the ESS in both of the SIS filters becomes negligible almost immediately, with the bootstrap SIR having a mean ESS of $0.029N$, and the optimal SIR having a mean ESS of $0.12N$. Evidently, a more-than-$k$-fold increase in $N$ will be required to maintain the filter's performance after a $k$-fold increase in dimension.
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% effective sample size
+\caption{Effective Sample Size showing effect of weight degeneracy before and after a 10-fold increase in both dimension and particle population size.\\
+\footnotesize{\textit{In the APF the particles are all drawn from the distribution of interest, so the ESS is not provided.}}}
+\label{fig:ESS}
+
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{Univariate $d = 1$, $N = 100$}
+		\includegraphics[scale = 0.5]{/ESS/d1-N100}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+				\caption{$d = 10$, $N = 1000$}
+		\includegraphics[scale = 0.5]{/ESS/d10-N1000}
+	\end{subfigure}
+
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+% ------------------------------------------------------------------------------------------------------
+
+\subsubsection{Computational cost}
+
+Alongside considerations of filter variance and bias, we should also consider computational cost - or, in this case, the amount of time required to process each of the filters. It should be noted that the code has not been optimised in any way, and each run includes the calculation of various summary statistics; the run time could almost certainly be improved, but this would be unlikely to affect the filters differently, or to vary in its effect across $N$ and $d$. The univariate case is not included here, because a different function (\texttt{rnorm} rather than \texttt{rmvnorm}, for example) is used to calculate or simulate from a univariate rather than a multivariate density, so direct comparison is not possible. The time taken to run each filter is obtained using \texttt{system.time}.
+
+Running time for each of the filters generally increased approximately linearly with $N$ (\autoref{fig:runtime}); for each proposal distribution, the difference in time needed to run the filter with and without resampling is small, suggesting that this is a relatively cheap way to improve performance (even more so if an adaptive resampling scheme were to be applied). 
+
+The computational cost of the optimal-proposal filters increases more rapidly with $d$ than that of the bootstrap-proposal filters due to the greater complexity of the calculation of the importance distribution, with both being approximately linear in log time; the APF, with its extra simulation-and-evaluation step, increases more rapidly. Unfortunately, due to the instability of the algorithm used at higher dimensions, data is rather limited, so the relative rate of the increase is difficult to assess. However, we can see that while, at very low dimensions, its computational cost is similar to that of the bootstrap filters, the time required rapidly increases to equal that of the optimal filter, and if the trend continues, may become more expensive quite rapidly.
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% runtime
+\caption{Time (in seconds) taken to run each filter with increasing dimension $d$ and number of particles $N$.}
+\label{fig:runtime}
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$d = 2$, $N$ varying}
+		\includegraphics[scale = 0.5]{runtime/d2}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$d = 50$, $N$ varying}
+		\includegraphics[scale = 0.5]{runtime/d50}
+	\end{subfigure}
+	
+	\vspace{10pt}
+	
+
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$N = 100$, $d$ varying}
+		\includegraphics[scale = 0.5]{runtime/N100}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.5\textwidth}
+		\caption{$N = 1000$, $d$ varying}
+		\includegraphics[scale = 0.5]{runtime/N1000}
+	\end{subfigure}
+	%
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+\subsubsection{Overall filter performance}
+
+In the simulations performed above, the filters using the optimal proposal distribution were able to track the state mean more closely than any of the filters that employed the bootstrap proposal distribution; adding a resampling step is a relatively computationally cheap way to improve the performance for any given proposal distribution. A costlier alternative is the more sophisticated auxiliary particle filter, which (when it completed successfully) generally produced a small improvement in RMSE against the bootstrap SIR. The APF variance was far more stable than that of any of the other filters; this suggests that an APF with a more carefully-constructed proposal distribution should be able to produce some further improvements over the optimal SIR, particularly in terms of filter variance, with a relatively small corresponding increase in computational cost. Adding extra computational resources by increasing the number of particles used seems to have less of an impact than refining the proposal distribution. 
+
+\newpage
+\section{Parameter estimation}
+
+Parameter estimation for this model was carried out using the \texttt{MARSS} package in R. This package was chosen because it implements both numerical optimisation (BFGS) and the EM algorithm, allowing for a direct comparison of the two approaches. Due to the length of time required to run these algorithms, tests were only run at dimensions up to $d=10$, and for datasets of 100 observations. Only the default convergence thresholds were used, leaving a lot of scope for further improvement in future applications.
+
+This package requires the user to specify the structure of the model; the same `skeleton' model was used for every run. Based on the structure of the model used to generate the data, and with some restructuring to account for constraints imposed by the package, this was set as
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{align*}
+x_0 = \left[ \begin{matrix} \mu_{0_1} \\ \mu_{0_2} \end{matrix}\right] &&
+\sigma_0 = \left[ \begin{matrix} \sigma_{0_{11}} &\sigma_{0_{12}} \\ \sigma_{0_{12}} & \sigma_{0_{22}}  \end{matrix}\right] &&
+\phi = \left[ \begin{matrix} \phi & 0 \\ 0 & \phi  \end{matrix}\right] &&
+\sigma_v = \left[ \begin{matrix} \sigma_{v_{11}} &\sigma_{v_{12}} \\ \sigma_{v_{12}} & \sigma_{v_{22}}  \end{matrix}\right] &&
+\rho = \left[ \begin{matrix} 1 & 0 \\ 0 & 1  \end{matrix}\right]
+\sigma_v = \left[ \begin{matrix} \sigma_{w_{11}} & 0 \\ 0 & \sigma_{w_{22}}  \end{matrix}\right]
+\end{align*}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The constraint that $\rho$ = \textbf{I} was based on the assumption that there is no particular observation bias in the data, as when simulating the data; in real applications, the user would need to carefully consider the reasonableness of this assumption.
+
+
+\subsection{Speed of convergence - obtaining a practical algorithm}
+The EM algorithm performs well in very low dimensions, converging much more quickly than the BFGS approach. However, at dimensions above $d = 5$, the algorithm quickly became unstable, often failing to reach a final solution for several thousand iterations before a numerical error eventually crashed the program. The naive BFGS approach, on the other hand, converged in all of the tests that were run, although it was very slow in doing so when the algorithm was not initialised close to the true values (see \autoref{fig:p-est-runtimes}). While the numerical approach is apparently more reliable (although we cannot extrapolate any conclusions about its stability to much higher dimensions), choice of appropriate starting values is clearly critical to minimise running time. 
+
+The \texttt{MARSS} package offers several approaches to selecting initial values for the BFGS algorithm. Alongside the standard defaults (setting all values to 0 except for $\mu_0$, which is initialised at $y_1$ in preference to \textbf{0}), it is possible to use the output from the EM algorithm as the initial values. This latter approach proved very effective in improving the running time of the BFGS algorithm, although of course, it is of no use when the EM algorithm itself fails due to numerical errors. However, plots of the first few iterations of the EM algorithm with various values of $d$ (not shown) suggest that the rate of convergence generally slows quite rapidly, and that it is not unreasonable to suppose that the EM algorithm approaches the optimum values within a relatively short number of iterations - or at least, that it approaches the optimum values closely enough that we can employ a relatively early iteration as an informative starting point for the BFGS algorithm.
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[!ht]		% Parameter-estimation runtime
+\caption{Time taken to estimate parameters using each method outlines, for varying dimension $d$.\\
+$\bullet$ indicates convergence according to the algorithm's default criteria; \\
+$\boldsymbol{\circ}$ indicates that the algorithm reached the maximum allowed number of iterations and was halted before converging; \\
+$\boldsymbol{\times}$ indicates that the algorithm failed due to numerical instabilities before convergence.}
+\label{fig:p-est-runtimes}
+		
+	\begin{subfigure}[t]{0.6\textwidth}
+	\caption{Time taken to reach convergence for each approach}
+	\includegraphics[scale = 0.6]{p-est/runtime}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.3\textwidth}
+	\caption{Log time taken}
+	\label{fig:p-est-runtimes:logs}
+	\includegraphics[scale = 0.6]{p-est/log-runtime}
+	\end{subfigure}
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Since the EM algorithm often failed after a few hundred iterations in dimensions $d \ge 5$, we must hope that we can identify useful starting points relatively quickly. To see to what extent this is the case, two versions of the EM-BFGS algorithm were tested, with the EM stage interrupted after 20 or 100 iterations, and the partially-optimised coefficients used as starting values for the BFGS optimisation.
+
+In terms of the total time taken to implement both the EM and BFGS steps of the algorithm, the difference is fairly minimal in the low dimensions that we are considering; the time taken to run either increases roughly exponentially with $d$ (\autoref{fig:p-est-runtimes:logs}).
+
+\subsection{Accuracy of convergence - performance of the algorithm}
+Estimation of the starting values was very poor, with all of the estimates producing a tiny variance-covariance matrix ; the largest value estimated for any element of any covariance matrix by any of the algorithms was 0.029, with the diagonal of $\sigma_0$ actually fixed at 2 for all data sets. As a result, the estimates of $\mu_0$ were extremely overdispersed, being much closer to $y_1$ (average RMSE: 1.74) than to the initial values (average RMSE: 3.05). In this simulation, where the starting conditions are not of particular interest, this is not a problem, but if accurate estimates of the starting conditions were required, then great care would need to be taken to specify the model structure and starting values so as to maximise the likelihood of obtaining an approximation to the correct values. 
+
+Estimation of $\phi$ was fairly accurate in all cases, even where the EM algorithm had crashed or been truncated before converging; estimates ranged from 0.93 to 0.99 (\autoref{fig:p-est-phi-density}). Under our model assumptions, this is unsurprising, since we constrained $\phi$ to be a single scalar applied across all variables, so this should intuitively be the most straightforward to estimate.
+
+Performance across the variance-covariance matrices was rather less impressive (\autoref{fig:p-est-vcov-RMSE}). In those cases where convergence was obtained, the RMSE of the estimate of the diagonal of the state variance matrix $\sigma_v$ ranged from 1 to 4, while the target variances were randomly-generated integers in the interval 8-12. Estimates of the off-diagonal of the state covariance matrix had an RMSE of between 1 and 2, against a target matrix with all values fixed at 3. The off-diagonals of the observation matrix were not estimated, being fixed at 0. It could be argued that there is evidence a slight increasing trend in the RMSE of the diagonal of $\sigma_v$ as $d$ increases, but there is no evidence of any such trend in the observation error $\sigma_w$, or the covariances of $\sigma_v$. (Of course, to make any stronger statement about any change in performance as $d$ increases, we would need to run a much larger set of simulations.)
+
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+\begin{figure}[H]		% RMSE of estimated variance-covariance matrices
+\caption{Accuracy of parameter estimation}
+\centering
+
+	\begin{subfigure}[t]{0.35\textwidth}
+		\caption{Density of estimates of $\phi$}
+			\label{fig:p-est-phi-density}
+		\includegraphics[scale = 0.6]{p-est/phi-density}
+	\end{subfigure}
+	%
+	\begin{subfigure}[t]{0.6\textwidth}
+		\caption{RMSE of EM-BFGS estimates of $\sigma_v$ and $\sigma_w$}
+			\label{fig:p-est-vcov-RMSE}
+	\includegraphics[scale = 0.6]{p-est/sig-v-rmse}
+	\end{subfigure}
+	
+\end{figure}
+%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Across all parameters, the estimates provided by the two combined EM-BFGS algorithms were virtually indistinguishable - again, this is to be expected, since the algorithm carrying out the final optimisation is the same. However, it is useful to confirm that the performance is not adversely affected by running the initial EM stage for a smaller number of iterations, either in terms of accuracy or overall processing time, although there is no guarantee that this performance will carry over into much higher dimensions.
+
+
+Based on the above observations, numerical optimisation appears to be a more stable method for parameter estimation than the EM algorithm in all but the lowest dimensions. However, without carefully-chosen starting values, the BFGS optimisation is very slow; here, a short initial EM run to find the vicinity of the optimal values is extremely useful, sustantially reducing the processing time. An interesting further extension would be to investigate the relative effectiveness of particle methods in parameter estimation; however, that is beyond the scope of this report.
+
+\end{document}
